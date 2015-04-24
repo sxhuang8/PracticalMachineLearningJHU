@@ -1,0 +1,133 @@
+---
+title: "Practical Machine Learning Course Project"
+output: 
+  html_document:
+    keep_md: true
+---
+
+```{r global_options, echo=FALSE, message=FALSE}
+library(knitr)
+opts_chunk$set(fig.width=6, fig.height=6, warning=FALSE, message=FALSE)
+```
+
+Updated on `r Sys.Date()` by Sarah Huang
+
+## Summary
+
+A data set containing the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants is analyzed. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to predict the manner in which they did the exercise. 
+
+The data set has two parts, one for training and the other for testing. The factor variable "classe" is the response variable. We first took the training set to build the model and estimated the out-of-sample error using cross validation. We experimented with a few different algorithms including linear discriminant analysis, decision tree, boosting and random forest. The best performing model was then applied to the test set to obtain the predictions. 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Preparation
+
+Load the necessary libraries and set the seed for reproducibility.
+
+```{r}
+library(caret); library(randomForest); library(rpart); library(rpart.plot); library(gbm)
+set.seed(2688)
+```
+
+Load the data.
+
+```{r}
+if (!file.exists("training.csv")) {
+  trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(trainUrl, "training.csv", mode="wb")
+}
+if (!file.exists("testing.csv")) {
+  testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv" 
+  download.file(testUrl, "testing.csv", mode="wb")
+}
+train <- read.csv("training.csv", na.strings=c("", NA)) #read the data and replace blank values with NA
+test <- read.csv("testing.csv", na.strings=c("", NA))    
+```
+
+Take a look at the training data.
+
+```{r}
+str(train, list.len=20) #data structure
+```
+
+The first 7 features are apparently irrelevant to the prediction thus we remove those. We also remove features with many missing values. This applys to both training data and test data. Further variable selection is unecessary for the algorithms we will experiment.
+
+```{r}
+train <- train[, c(-(1:7))]
+train <- train[ , colSums(is.na(train)) == 0]
+test <- test[, c(-(1:7))]
+test <- test[ , colSums(is.na(test)) == 0]
+dim(train)
+```
+
+## Machine Learning
+
+To allow for cross validation, we split the training data set into 2 groups, 75% for building the model and 25% for validation. The validation data set will be used to calculate the expected out-of-sample error.
+
+```{r}
+inTrain <- createDataPartition(train$classe, p=.75, list=FALSE)
+trainSub <- train[inTrain, ] #data to train the model
+testSub <- train[-inTrain, ] #data for cross validation
+```
+
+We'll try 4 different modeling algorithms for our data set which has continuous predictors and a 5-level categorical response (multinomial classification)
+
+First model: Linear Discriminant Analysis (LDA)
+
+```{r}
+ldaFit <- train(classe ~ ., method="lda", data=trainSub)
+m1 <- confusionMatrix(testSub$classe, predict(ldaFit, testSub))
+print(m1)
+```
+
+Second model: Classification tree (CART)
+
+```{r}
+rpartFit <- rpart(classe ~ ., method="class", data=trainSub)
+rpart.plot(rpartFit, main="Classification Tree", under=TRUE)
+m2 <- confusionMatrix(testSub$classe, predict(rpartFit, testSub, type="class"))
+print(m2)
+```
+
+Third model: Boosting
+
+```{r}
+gbmFit <- gbm(classe ~ ., data=trainSub, shrinkage=.1, n.trees=300, verbose=FALSE)
+predictions <- predict(gbmFit, testSub, n.trees=300, type="response")
+predictions <- as.factor(colnames(predictions)[apply(predictions, 1, which.max)])
+m3 <- confusionMatrix(testSub$classe, predictions)
+print(m3)
+```
+
+Fourth model: Random Forest
+
+```{r}
+rfFit <- randomForest(classe ~ ., method="class", data=trainSub)
+m4 <- confusionMatrix(testSub$classe, predict(rfFit, testSub, type="class"))
+print(m4)
+```
+
+Comparison of results:
+
+(out-of-sample error is calculated as (1 - accuracy))
+
+Model | Out-of-sample error estimate | Summary
+------ | ------ | ------
+LDA | `r round(1-m1$overall[[1]], 3)` | more assumptions, performs poorly when f() is complex. 
+CART | `r round(1-m2$overall[[1]], 3)` | low bias, high variance, easy to interpret, easily overfit, fast.
+Boosting | `r round(1-m3$overall[[1]], 3)` | reduced bias/variance, high accuracy
+Random Forest | `r round(1-m4$overall[[1]], 3)` | reduced bias/variance, high accuracy, poor interpretability, low speed. 
+
+Random Forest performs the best. Since for this particular problem, we are not interested at all the relationships between the predictors and the response and our only concern is the accuracy, Random Forest wins.
+
+## Predictions on the test set
+
+Using Random Forest algorithm, we can reasonably expect the out-of-sample error in predicting the test set to be in line with what we obtained from cross validation as shown above.
+
+```{r}
+predict(rfFit, test, type="class")
+```
+
+
+
+
